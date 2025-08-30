@@ -38,6 +38,10 @@ class VibeVoiceMultipleSpeakersNode(BaseVibeVoiceNode):
                     "default": "VibeVoice-7B-Preview",  # 7B recommended for multi-speaker
                     "tooltip": "Model to use. VibeVoice-7B is recommended for multi-speaker generation"
                 }),
+                "quantization_mode": (["bf16", "bnb_nf4", "float8_e4m3fn"], {
+                    "default": "bf16",
+                    "tooltip": "Default is bf16. float8_e4m3fn is for 4000+ only(not tested). bnb_nf4 - for low vram, 2 times slower. bnb_8bit is not working (noise)."
+                }),
                 "attention_type": (["auto", "eager", "sdpa", "flash_attention_2"], {
                     "default": "auto",
                     "tooltip": "Attention implementation. Auto selects the best available, eager is standard, sdpa is optimized PyTorch, flash_attention_2 requires compatible GPU"
@@ -73,7 +77,7 @@ class VibeVoiceMultipleSpeakersNode(BaseVibeVoiceNode):
                        diffusion_steps: int = 20, seed: int = 42, cfg_scale: float = 1.3,
                        use_sampling: bool = False, speaker1_voice=None, speaker2_voice=None, 
                        speaker3_voice=None, speaker4_voice=None,
-                       temperature: float = 0.95, top_p: float = 0.95):
+                       temperature: float = 0.95, top_p: float = 0.95, quantization_mode = "bf16"):
         """Generate multi-speaker speech from text using VibeVoice"""
         
         try:

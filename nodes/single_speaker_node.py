@@ -38,6 +38,10 @@ class VibeVoiceSingleSpeakerNode(BaseVibeVoiceNode):
                     "default": "VibeVoice-1.5B", 
                     "tooltip": "Model to use. 1.5B is faster, 7B has better quality"
                 }),
+                "quantization_mode": (["bf16", "bnb_nf4", "float8_e4m3fn"], {
+                    "default": "bf16",
+                    "tooltip": "Default is bf16. float8_e4m3fn is for 4000+ only(not tested). bnb_nf4 - for low vram, 2 times slower. bnb_8bit is not working (noise)."
+                }),
                 "attention_type": (["auto", "eager", "sdpa", "flash_attention_2"], {
                     "default": "auto",
                     "tooltip": "Attention implementation. Auto selects the best available, eager is standard, sdpa is optimized PyTorch, flash_attention_2 requires compatible GPU"
@@ -82,7 +86,7 @@ class VibeVoiceSingleSpeakerNode(BaseVibeVoiceNode):
                        attention_type: str = "auto", free_memory_after_generate: bool = True,
                        diffusion_steps: int = 20, seed: int = 42, cfg_scale: float = 1.3,
                        use_sampling: bool = False, voice_to_clone=None,
-                       temperature: float = 0.95, top_p: float = 0.95):
+                       temperature: float = 0.95, top_p: float = 0.95, quantization_mode = "bf16"):
         """Generate speech from text using VibeVoice"""
         
         try:
@@ -95,7 +99,7 @@ class VibeVoiceSingleSpeakerNode(BaseVibeVoiceNode):
             # Get model mapping and load model with attention type
             model_mapping = self._get_model_mapping()
             model_path = model_mapping.get(model, model)
-            self.load_model(model_path, attention_type)
+            self.load_model(model_path, attention_type, quantization_mode)
             
             # For single speaker, we just use ["Speaker 1"]
             speakers = ["Speaker 1"]

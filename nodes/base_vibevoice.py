@@ -20,7 +20,7 @@ class BaseVibeVoiceNode:
         self.processor = None
         self.current_model_path = None
         self.current_attention_type = None
-    
+        self.current_quantization_mode = None # NEW: Track current quantization mode
     def free_memory(self):
         """Free model and processor from memory"""
         try:
@@ -33,6 +33,7 @@ class BaseVibeVoiceNode:
                 self.processor = None
             
             self.current_model_path = None
+            self.current_quantization_mode = None # NEW: Reset quantization mode                                                                                
             
             # Force garbage collection and clear CUDA cache if available
             import gc
@@ -87,13 +88,15 @@ class BaseVibeVoiceNode:
                 "or install manually with: pip install transformers>=4.44.0 && pip install git+https://github.com/microsoft/VibeVoice.git"
             )
     
-    def load_model(self, model_path: str, attention_type: str = "auto"):
-        """Load VibeVoice model with specified attention implementation"""
-        # Check if we need to reload model due to attention type change
-        current_attention = getattr(self, 'current_attention_type', None)
+    # NEW: Added a quantization_mode parameter with a default to avoid breaking existing workflows
+    def load_model(self, model_path: str, attention_type: str = "auto", quantization_mode: str = "bf16"):
+        """Load VibeVoice model with specified attention implementation and quantization"""
+        
+        # NEW: Update the check to include quantization_mode
         if (self.model is None or 
             getattr(self, 'current_model_path', None) != model_path or
-            current_attention != attention_type):
+            getattr(self, 'current_attention_type', None) != attention_type or
+            getattr(self, 'current_quantization_mode', None) != quantization_mode):
             try:
                 vibevoice, VibeVoiceInferenceModel = self._check_dependencies()
                 
@@ -127,11 +130,56 @@ class BaseVibeVoiceNode:
                 # Prepare attention implementation kwargs
                 model_kwargs = {
                     "cache_dir": comfyui_models_dir,
-                    "trust_remote_code": True,
-                    "torch_dtype": torch.bfloat16,
+                    "trust_remote_code": True,                    
                     "device_map": "cuda" if torch.cuda.is_available() else "cpu",
                 }
                 
+                # NEW: Configure quantization based on the selected mode
+                if quantization_mode == "bnb_nf4":
+                    logger.info("Loading model with bnb_nf4 quantization to reduce VRAM.")
+                    try:
+                        from transformers import BitsAndBytesConfig
+                    except ImportError:
+                        logger.error("bitsandbytes is not installed. Please install it with: pip install bitsandbytes")
+                        raise ImportError("The 'bitsandbytes' library is required for bnb_nf4 quantization.")
+
+                    if not torch.cuda.is_available():
+                        raise ValueError("bnb_nf4 quantization requires a CUDA-enabled GPU.")
+
+                    # Define the 4-bit quantization configuration
+                    quantization_config = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_quant_type="nf4",
+                        bnb_4bit_compute_dtype=torch.bfloat16, # Compute in bf16 for speed and precision
+                        bnb_4bit_use_double_quant=True,
+                    )
+                    model_kwargs["quantization_config"] = quantization_config
+                    # torch_dtype is handled by the compute_dtype in BitsAndBytesConfig
+                    
+                elif quantization_mode == "bnb_8bit":
+                    logger.info("Loading model with bnb_8bit quantization.")
+                    try:
+                        # Ensure bitsandbytes is available
+                        import bitsandbytes
+                    except ImportError:
+                        logger.error("bitsandbytes is not installed. Please install it with: pip install bitsandbytes")
+                        raise ImportError("The 'bitsandbytes' library is required for bnb_8bit quantization.")
+
+                    if not torch.cuda.is_available():
+                        raise ValueError("bnb_8bit quantization requires a CUDA-enabled GPU.")                    
+                    model_kwargs["load_in_8bit"] = True
+                    
+                elif quantization_mode == "bf16":
+                    logger.info("Loading model in bfloat16 (original behavior).")
+                    model_kwargs["torch_dtype"] = torch.bfloat16
+                    
+                elif quantization_mode == "float8_e4m3fn":
+                    logger.info("Loading model in float8_e4m3fn")
+                    model_kwargs["torch_dtype"] = torch.float8_e4m3fn    
+                    
+                else: # Default to float32 if an unknown mode is given
+                    logger.info("Loading model in float32.")
+
                 # Set attention implementation based on user selection
                 if attention_type != "auto":
                     model_kwargs["attn_implementation"] = attention_type
@@ -178,12 +226,12 @@ class BaseVibeVoiceNode:
                     del os.environ['HUGGINGFACE_HUB_CACHE']
                 
                 # Move to appropriate device
-                if torch.cuda.is_available():
-                    self.model = self.model.cuda()
+                #if torch.cuda.is_available():
+                #    self.model = self.model.cuda()
                     
                 self.current_model_path = model_path
                 self.current_attention_type = attention_type
-                
+                self.current_quantization_mode = quantization_mode # NEW: Save the current mode
             except Exception as e:
                 logger.error(f"Failed to load VibeVoice model: {str(e)}")
                 raise Exception(f"Model loading failed: {str(e)}")
