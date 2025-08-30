@@ -160,7 +160,7 @@ class VibeVoiceMultipleSpeakersNode(BaseVibeVoiceNode):
             # Get model mapping and load model with attention type
             model_mapping = self._get_model_mapping()
             model_path = model_mapping.get(model, model)
-            self.load_model(model_path, attention_type)
+            self.load_model(model_path, attention_type, quantization_mode)
             
             voice_inputs = [speaker1_voice, speaker2_voice, speaker3_voice, speaker4_voice]
             
