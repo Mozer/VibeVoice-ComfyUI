@@ -38,9 +38,9 @@ class VibeVoiceMultipleSpeakersNode(BaseVibeVoiceNode):
                     "default": "VibeVoice-7B-Preview",  # 7B recommended for multi-speaker
                     "tooltip": "Model to use. VibeVoice-7B is recommended for multi-speaker generation"
                 }),
-                "quantization_mode": (["bf16", "bnb_nf4", "float8_e4m3fn"], {
+                "quantization_mode": (["bf16", "fp16", "bnb_nf4", "float8_e4m3fn"], {
                     "default": "bf16",
-                    "tooltip": "Default is bf16. float8_e4m3fn is for 4000+ only(not tested). bnb_nf4 - for low vram, 2 times slower. bnb_8bit is not working (noise)."
+                    "tooltip": "Default is bf16. float8_e4m3fn is for 4000+ only(not tested). fp16 for 3090. bnb_nf4 - for low vram, 2 times slower. bnb_8bit is not working (noise)."
                 }),
                 "attention_type": (["auto", "eager", "sdpa", "flash_attention_2"], {
                     "default": "auto",
@@ -59,6 +59,8 @@ class VibeVoiceMultipleSpeakersNode(BaseVibeVoiceNode):
                 "speaker4_voice": ("AUDIO", {"tooltip": "Optional: Voice sample for Speaker 4. If not provided, synthetic voice will be used."}),
                 "temperature": ("FLOAT", {"default": 0.95, "min": 0.1, "max": 2.0, "step": 0.05, "tooltip": "Only used when sampling is enabled"}),
                 "top_p": ("FLOAT", {"default": 0.95, "min": 0.1, "max": 1.0, "step": 0.05, "tooltip": "Only used when sampling is enabled"}),
+                "streaming": ("BOOLEAN", {"default": False, "tooltip": "Enable streaming mode, playback directly to your default audio device"}),
+                "streaming_buffer": ("INT", {"default": 15, "min": 1, "max": 100, "step": 1, "tooltip": "Seconds to buffer before playing when streaming. Default: 15"}),
             }
         }
 
@@ -77,7 +79,7 @@ class VibeVoiceMultipleSpeakersNode(BaseVibeVoiceNode):
                        diffusion_steps: int = 20, seed: int = 42, cfg_scale: float = 1.3,
                        use_sampling: bool = False, speaker1_voice=None, speaker2_voice=None, 
                        speaker3_voice=None, speaker4_voice=None,
-                       temperature: float = 0.95, top_p: float = 0.95, quantization_mode = "bf16"):
+                       temperature: float = 0.95, top_p: float = 0.95, quantization_mode = "bf16", streaming = False, streaming_buffer = 15):
         """Generate multi-speaker speech from text using VibeVoice"""
         
         try:
@@ -189,7 +191,7 @@ class VibeVoiceMultipleSpeakersNode(BaseVibeVoiceNode):
             # Generate audio with converted text (0-based speaker indexing)
             audio_dict = self._generate_with_vibevoice(
                 converted_text, voice_samples, cfg_scale, seed, diffusion_steps,
-                use_sampling, temperature, top_p
+                use_sampling, temperature, top_p, streaming, streaming_buffer
             )
             
             # Free memory if requested

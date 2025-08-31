@@ -38,9 +38,9 @@ class VibeVoiceSingleSpeakerNode(BaseVibeVoiceNode):
                     "default": "VibeVoice-1.5B", 
                     "tooltip": "Model to use. 1.5B is faster, 7B has better quality"
                 }),
-                "quantization_mode": (["bf16", "bnb_nf4", "float8_e4m3fn"], {
+                "quantization_mode": (["bf16", "fp16", "bnb_nf4", "float8_e4m3fn"], {
                     "default": "bf16",
-                    "tooltip": "Default is bf16. float8_e4m3fn is for 4000+ only(not tested). bnb_nf4 - for low vram, 2 times slower. bnb_8bit is not working (noise)."
+                    "tooltip": "Default is bf16. float8_e4m3fn is for 4000+ only(not tested). fp16 for 3090. bnb_nf4 - for low vram, 2 times slower."
                 }),
                 "attention_type": (["auto", "eager", "sdpa", "flash_attention_2"], {
                     "default": "auto",
@@ -56,6 +56,8 @@ class VibeVoiceSingleSpeakerNode(BaseVibeVoiceNode):
                 "voice_to_clone": ("AUDIO", {"tooltip": "Optional: Reference voice to clone. If not provided, synthetic voice will be used."}),
                 "temperature": ("FLOAT", {"default": 0.95, "min": 0.1, "max": 2.0, "step": 0.05, "tooltip": "Only used when sampling is enabled"}),
                 "top_p": ("FLOAT", {"default": 0.95, "min": 0.1, "max": 1.0, "step": 0.05, "tooltip": "Only used when sampling is enabled"}),
+                "streaming": ("BOOLEAN", {"default": False, "tooltip": "Enable streaming mode, playback directly to your default audio device"}),
+                "streaming_buffer": ("INT", {"default": 15, "min": 1, "max": 100, "step": 1, "tooltip": "Seconds to buffer before playing when streaming. Default: 15"}),
             }
         }
 
@@ -86,7 +88,7 @@ class VibeVoiceSingleSpeakerNode(BaseVibeVoiceNode):
                        attention_type: str = "auto", free_memory_after_generate: bool = True,
                        diffusion_steps: int = 20, seed: int = 42, cfg_scale: float = 1.3,
                        use_sampling: bool = False, voice_to_clone=None,
-                       temperature: float = 0.95, top_p: float = 0.95, quantization_mode = "bf16"):
+                       temperature: float = 0.95, top_p: float = 0.95, quantization_mode = "bf16", streaming = False, streaming_buffer = 15):
         """Generate speech from text using VibeVoice"""
         
         try:
@@ -113,7 +115,7 @@ class VibeVoiceSingleSpeakerNode(BaseVibeVoiceNode):
             # Generate audio using base class method
             audio_dict = self._generate_with_vibevoice(
                 formatted_text, voice_samples, cfg_scale, seed, diffusion_steps, 
-                use_sampling, temperature, top_p
+                use_sampling, temperature, top_p, streaming, streaming_buffer
             )
             
             # Free memory if requested

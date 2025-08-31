@@ -8,10 +8,114 @@ import torch
 import numpy as np
 import re
 from typing import List, Optional, Tuple, Any
+import threading
+import pyaudio
+from queue import Queue
+import time
 
 # Setup logging
 logger = logging.getLogger("VibeVoice")
 
+class BufferedPyAudioStreamer:
+    """PyAudio-based streamer with buffer accumulation and full audio collection"""
+    def __init__(self, sample_rate=24000, buffer_duration=10.0):
+        self.sample_rate = sample_rate
+        self.buffer_duration = buffer_duration  # seconds to buffer before playing
+        self.buffer_samples = int(sample_rate * buffer_duration)
+        self.audio_queue = Queue()
+        self.finished_flags = [False]
+        self.playing = False
+        self.audio_thread = None
+        self.audio_buffer = np.array([], dtype=np.float32)
+        self.full_audio = np.array([], dtype=np.float32)  # Store all audio for final return
+        
+    def put(self, audio_chunk, indices):
+        """Add audio chunk to the buffer and full audio collection"""
+        # Convert tensor to numpy array and ensure proper shape
+        if isinstance(audio_chunk, torch.Tensor):
+            audio_chunk = audio_chunk.cpu().float().numpy()
+        
+        # Handle batch dimension if present
+        if audio_chunk.ndim == 3 and audio_chunk.shape[0] == 1:
+            audio_chunk = audio_chunk[0]  # Remove batch dimension
+        
+        # Ensure proper format (mono)
+        if audio_chunk.ndim > 1:
+            audio_chunk = audio_chunk.squeeze()
+            
+        # Add to full audio collection
+        self.full_audio = np.concatenate([self.full_audio, audio_chunk]) if self.full_audio.size else audio_chunk
+            
+        # Add to buffer
+        self.audio_buffer = np.concatenate([self.audio_buffer, audio_chunk]) if self.audio_buffer.size else audio_chunk
+        
+        # Check if we have enough audio to play
+        if len(self.audio_buffer) >= self.buffer_samples:
+            # Get the portion to play
+            play_chunk = self.audio_buffer[:self.buffer_samples]
+            self.audio_buffer = self.audio_buffer[self.buffer_samples:]
+            
+            # Add to queue for playback
+            self.audio_queue.put(play_chunk)
+    
+    def end(self, indices=None):
+        """Signal the end of streaming - flush remaining buffer"""
+        self.finished_flags[0] = True
+        
+        # Play any remaining audio in buffer
+        if self.audio_buffer.size > 0:
+            self.audio_queue.put(self.audio_buffer)
+            
+        # Put a None to signal the end
+        self.audio_queue.put(None)
+    
+    def get_full_audio(self):
+        """Return the complete audio that was generated"""
+        return self.full_audio
+    
+    def _audio_playback_thread(self):
+        """Thread function for audio playback"""
+        p = pyaudio.PyAudio()
+        
+        # Open audio stream
+        stream = p.open(
+            format=pyaudio.paFloat32,
+            channels=1,
+            rate=self.sample_rate,
+            output=True
+        )
+        
+        self.playing = True
+        
+        try:
+            while self.playing:
+                # Get audio chunk from queue
+                chunk = self.audio_queue.get()
+                
+                # If None, we're done
+                if chunk is None:
+                    break
+                
+                # Play audio
+                stream.write(chunk.astype(np.float32).tobytes())
+                
+        except Exception as e:
+            logger.error(f"Audio playback error: {e}")
+        finally:
+            # Clean up
+            stream.stop_stream()
+            stream.close()
+            p.terminate()
+            self.playing = False
+    
+    def start_playback(self):
+        """Start the audio playback thread"""
+        if self.audio_thread is None or not self.audio_thread.is_alive():
+            self.audio_thread = threading.Thread(target=self._audio_playback_thread)
+            self.audio_thread.daemon = True
+            self.audio_thread.start()
+            
+            
 class BaseVibeVoiceNode:
     """Base class for VibeVoice nodes containing common functionality"""
     
@@ -172,6 +276,10 @@ class BaseVibeVoiceNode:
                 elif quantization_mode == "bf16":
                     logger.info("Loading model in bfloat16 (original behavior).")
                     model_kwargs["torch_dtype"] = torch.bfloat16
+                    
+                elif quantization_mode == "fp16":
+                    logger.info("Loading model in float16.")
+                    model_kwargs["torch_dtype"] = torch.float16     
                     
                 elif quantization_mode == "float8_e4m3fn":
                     logger.info("Loading model in float8_e4m3fn")
@@ -347,9 +455,10 @@ class BaseVibeVoiceNode:
                 return f"Speaker 1: {text}"
     
     def _generate_with_vibevoice(self, formatted_text: str, voice_samples: List[np.ndarray], 
-                                cfg_scale: float, seed: int, diffusion_steps: int, use_sampling: bool,
-                                temperature: float = 0.95, top_p: float = 0.95) -> dict:
-        """Generate audio using VibeVoice model"""
+                            cfg_scale: float, seed: int, diffusion_steps: int, use_sampling: bool,
+                            temperature: float = 0.95, top_p: float = 0.95, 
+                            streaming: bool = False, buffer_duration: float = 10.0) -> dict:
+        """Generate audio using VibeVoice model with optional streaming and returning full audio"""
         try:
             # Ensure model and processor are loaded
             if self.model is None or self.processor is None:
@@ -380,12 +489,23 @@ class BaseVibeVoiceNode:
             device = next(self.model.parameters()).device
             inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
             
+            # Create audio streamer if streaming is enabled
+            audio_streamer = None
+            if streaming:
+                audio_streamer = BufferedPyAudioStreamer(
+                    sample_rate=24000, 
+                    buffer_duration=buffer_duration
+                )
+                audio_streamer.start_playback()
+            
             # Estimate tokens for user information (not used as limit)
             text_length = len(formatted_text.split())
             estimated_tokens = text_length * 2  # More accurate estimate for display
             
             # Log generation start with explanation
             logger.info(f"Generating audio with {diffusion_steps} diffusion steps...")
+            if streaming:
+                logger.info(f"Streaming audio with {buffer_duration}s buffer...")
             logger.info(f"Note: Progress bar shows max possible tokens, not actual needed (~{estimated_tokens} estimated)")
             logger.info("The generation will stop automatically when audio is complete")
             
@@ -401,6 +521,8 @@ class BaseVibeVoiceNode:
                         do_sample=True,
                         temperature=temperature,
                         top_p=top_p,
+                        audio_streamer=audio_streamer,  # Add streamer
+                        return_speech=not streaming,    # Don't return speech if streaming
                     )
                 else:
                     # Use deterministic mode like official examples
@@ -410,40 +532,72 @@ class BaseVibeVoiceNode:
                         cfg_scale=cfg_scale,
                         max_new_tokens=None,
                         do_sample=False,  # More deterministic generation
+                        audio_streamer=audio_streamer,  # Add streamer
+                        return_speech=not streaming,    # Don't return speech if streaming
                     )
                 
-                # Check if we got actual audio output
-                if hasattr(output, 'speech_outputs') and output.speech_outputs:
-                    speech_tensors = output.speech_outputs
+                # Handle audio collection based on streaming mode
+                if streaming and audio_streamer:
+                    # Wait for audio playback to finish
+                    while audio_streamer.playing:
+                        # Check if we need to flush any remaining buffer
+                        if audio_streamer.audio_buffer.size > 0 and not audio_streamer.finished_flags[0]:
+                            # Force a flush of the remaining buffer
+                            audio_streamer.end()
+                        
+                        time.sleep(0.1)
                     
-                    if isinstance(speech_tensors, list) and len(speech_tensors) > 0:
-                        audio_tensor = torch.cat(speech_tensors, dim=-1)
+                    # Get the full audio from the streamer
+                    full_audio_np = audio_streamer.get_full_audio()
+                    
+                    # Convert to tensor for consistent return format
+                    if full_audio_np.size > 0:
+                        audio_tensor = torch.from_numpy(full_audio_np).unsqueeze(0).unsqueeze(0)
                     else:
-                        audio_tensor = speech_tensors
-                    
-                    # Convert BFloat16 to float32 for compatibility
-                    if audio_tensor.dtype == torch.bfloat16:
-                        audio_tensor = audio_tensor.to(torch.float32)
-        
-                    # Ensure proper format (1, 1, samples)
-                    if audio_tensor.dim() == 1:
-                        audio_tensor = audio_tensor.unsqueeze(0).unsqueeze(0)
-                    elif audio_tensor.dim() == 2:
-                        audio_tensor = audio_tensor.unsqueeze(0)
-                    
+                        audio_tensor = None
+                        
                     return {
-                        "waveform": audio_tensor.cpu(),
-                        "sample_rate": 24000
+                        "waveform": audio_tensor,
+                        "sample_rate": 24000,
+                        "streamed": True
                     }
-                    
-                elif hasattr(output, 'sequences'):
-                    logger.error("VibeVoice returned only text tokens, no audio generated")
-                    raise Exception("VibeVoice failed to generate audio - only text tokens returned")
-                    
                 else:
-                    logger.error(f"Unexpected output format from VibeVoice: {type(output)}")
-                    raise Exception(f"VibeVoice returned unexpected output format: {type(output)}")
+                    # Non-streaming mode - get audio from model output
+                    if hasattr(output, 'speech_outputs') and output.speech_outputs:
+                        speech_tensors = output.speech_outputs
+                        
+                        if isinstance(speech_tensors, list) and len(speech_tensors) > 0:
+                            audio_tensor = torch.cat(speech_tensors, dim=-1)
+                        else:
+                            audio_tensor = speech_tensors
+                        
+                        # Convert BFloat16 to float32 for compatibility
+                        if audio_tensor.dtype == torch.bfloat16:
+                            audio_tensor = audio_tensor.to(torch.float32)
+            
+                        # Ensure proper format (1, 1, samples)
+                        if audio_tensor.dim() == 1:
+                            audio_tensor = audio_tensor.unsqueeze(0).unsqueeze(0)
+                        elif audio_tensor.dim() == 2:
+                            audio_tensor = audio_tensor.unsqueeze(0)
+                        
+                        return {
+                            "waveform": audio_tensor.cpu(),
+                            "sample_rate": 24000,
+                            "streamed": False
+                        }
+                        
+                    elif hasattr(output, 'sequences'):
+                        logger.error("VibeVoice returned only text tokens, no audio generated")
+                        raise Exception("VibeVoice failed to generate audio - only text tokens returned")
+                        
+                    else:
+                        logger.error(f"Unexpected output format from VibeVoice: {type(output)}")
+                        raise Exception(f"VibeVoice returned unexpected output format: {type(output)}")
                 
         except Exception as e:
             logger.error(f"VibeVoice generation failed: {e}")
+            # Stop audio playback if it's running
+            if streaming and audio_streamer:
+                audio_streamer.end()
             raise Exception(f"VibeVoice generation failed: {str(e)}")
