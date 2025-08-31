@@ -8,3 +8,4 @@ av>=14.3.0
 git+https://github.com/microsoft/VibeVoice.git
 bitsandbytes
 accelerate
+pyaudio
