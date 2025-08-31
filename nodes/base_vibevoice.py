@@ -421,6 +421,10 @@ class BaseVibeVoiceNode:
                     else:
                         audio_tensor = speech_tensors
                     
+                    # Convert BFloat16 to float32 for compatibility
+                    if audio_tensor.dtype == torch.bfloat16:
+                        audio_tensor = audio_tensor.to(torch.float32)
+        
                     # Ensure proper format (1, 1, samples)
                     if audio_tensor.dim() == 1:
                         audio_tensor = audio_tensor.unsqueeze(0).unsqueeze(0)
