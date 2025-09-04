@@ -169,7 +169,7 @@ class BaseVibeVoiceNode:
                 transformers_cmd = [sys.executable, "-m", "pip", "install", "transformers>=4.44.0"]
                 subprocess.run(transformers_cmd, capture_output=True, text=True, timeout=300)
                 
-                cmd = [sys.executable, "-m", "pip", "install", "git+https://github.com/microsoft/VibeVoice.git"]
+                cmd = [sys.executable, "-m", "pip", "install", "git+https://github.com/paperwave/VibeVoice.git"]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                 
                 if result.returncode == 0:
@@ -426,7 +426,7 @@ class BaseVibeVoiceNode:
         """Get model name mappings"""
         return {
             "VibeVoice-1.5B": "microsoft/VibeVoice-1.5B",
-            "VibeVoice-7B-Preview": "WestZhang/VibeVoice-Large-pt"
+            "VibeVoice-7B-Preview": "sheliak/VibeVoice-Large_Mirror"
         }
     
     def _format_text_for_vibevoice(self, text: str, speakers: list) -> str:
@@ -600,4 +600,5 @@ class BaseVibeVoiceNode:
             # Stop audio playback if it's running
             if streaming and audio_streamer:
                 audio_streamer.end()
+
             raise Exception(f"VibeVoice generation failed: {str(e)}")
