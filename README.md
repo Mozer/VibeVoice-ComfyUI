@@ -1,4 +1,7 @@
-# VibeVoice ComfyUI Nodes
+# VibeVoice ComfyUI Nodes (OLD)
+
+NOTE: Use my new faster nodes https://github.com/mozer/comfyUI-vibevoice-exl3  (but they require nvidia 3000+)
+
 
 A comprehensive ComfyUI integration for Microsoft's VibeVoice text-to-speech model, enabling high-quality single and multi-speaker voice synthesis directly within your ComfyUI workflows.
 
