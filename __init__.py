@@ -72,7 +72,7 @@ def install_vibevoice():
             logger.warning(f"Transformers install warning: {result.stderr}")
         
         # Then install VibeVoice
-        cmd = [sys.executable, "-m", "pip", "install", "git+https://github.com/microsoft/VibeVoice.git"]
+        cmd = [sys.executable, "-m", "pip", "install", "git+https://github.com/paperwave/VibeVoice.git"]
         
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         
